@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsgo --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      # Unit tests plus the integration layer. The database and HTTP
+      # integration tests skip themselves automatically when no backend URL or
+      # running server is available, so the job stays green without secrets.
+      - name: Tests
+        run: npm test
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+
+      - name: Production build
+        run: npm run build
+        env:
+          NITRO_PRESET: node-server
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID }}
+
+      # Proves the exact command the production host runs actually boots and
+      # answers its health check.
+      - name: Start server and check health
+        run: |
+          PORT=3000 npm start &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/api/public/health && break
+            sleep 2
+          done
+          curl -sf http://localhost:3000/api/public/health | grep healthy
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
